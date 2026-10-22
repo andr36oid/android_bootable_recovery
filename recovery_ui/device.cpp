@@ -160,6 +160,8 @@ int Device::HandleMenuKey(int key, bool visible) {
 
     case KEY_BACKSPACE:
     case KEY_BACK:
+    // B on a gamepad (andr36oid handhelds: A selects, B goes back)
+    case BTN_EAST:
       return kGoBack;
 
     case KEY_AGAIN:
