@@ -1,6 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="emmc_tools">eMMC tools</string>
+    <string name="usb_title">Connect to a computer over USB</string>
+    <string name="usb_why">ADB needs the OTG port to act as a device for a computer, not as a host for accessories.</string>
+    <string name="usb_wifi">Do not do this if your console has Wi-Fi built in, such as the R36XX: it uses this same USB port for its Wi-Fi, which then stops working until you restart.</string>
+    <string name="usb_charging">Never do this while the console is charging from its other port. Unplug the charger first.</string>
+    <string name="usb_connect">Connect</string>
+    <string name="usb_failed">The OTG port could not switch to a computer. If a charger is plugged in, unplug it and try again.</string>
     <string name="emmc_info">Show eMMC info</string>
     <string name="emmc_restore">Restore stock eMMC</string>
     <string name="emmc_refresh">Refresh</string>

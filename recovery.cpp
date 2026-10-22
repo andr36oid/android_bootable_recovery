@@ -380,6 +380,34 @@ static void emmc_tools(Device* device) {
   }
 }
 
+// The OTG port starts as a host for accessories; a computer only sees adb once it is a device.
+// Built-in Wi-Fi on some consoles hangs off this port, so the user confirms first, like
+// Settings > USB mode in Android. A restart puts the port back to host.
+static const char kOtgMode[] =
+    "/sys/devices/platform/ff2c0000.syscon/ff2c0000.syscon:usb2-phy@100/otg_mode";
+
+static bool usb_device_mode(Device* device) {
+  std::string mode;
+  // No switch on this console (or already a device): nothing to ask
+  if (!android::base::ReadFileToString(kOtgMode, &mode)) return true;
+  if (android::base::Trim(mode) == "peripheral") return true;
+  auto ui = device->GetUI();
+  std::vector<std::string> headers{ emmc_strings::usb_title, emmc_strings::usb_why,
+                                    emmc_strings::usb_wifi, emmc_strings::usb_charging };
+  if (ui->ShowMenu(headers, { emmc_strings::emmc_cancel, emmc_strings::usb_connect }, 0, true,
+                   std::bind(&Device::HandleMenuKey, device, std::placeholders::_1,
+                             std::placeholders::_2)) != 1) {
+    return false;
+  }
+  android::base::WriteStringToFile("peripheral", kOtgMode);
+  if (!android::base::ReadFileToString(kOtgMode, &mode) ||
+      android::base::Trim(mode) != "peripheral") {
+    ui->Print("%s\n", emmc_strings::usb_failed);
+    return false;
+  }
+  return true;
+}
+
 static InstallResult apply_update_menu(Device* device, Device::BuiltinAction* reboot_action){
   RecoveryUI* ui = device->GetUI();
   std::vector<std::string> headers{ "Apply update" };
@@ -418,6 +446,7 @@ static InstallResult apply_update_menu(Device* device, Device::BuiltinAction* re
     }
 
     if (chosen == item_sideload) {
+      if (!usb_device_mode(device)) continue;
       status = ApplyFromAdb(device, false /* rescue_mode */, reboot_action);
     } else {
       status = ApplyFromStorage(device, volumes[chosen - 1]);
@@ -770,6 +799,7 @@ change_menu:
         break;
 
       case Device::ENABLE_ADB:
+        if (!usb_device_mode(device)) break;
         android::base::SetProperty("ro.adb.secure.recovery", "0");
         android::base::SetProperty("ctl.restart", "adbd");
         device->RemoveMenuItemForAction(Device::ENABLE_ADB);
