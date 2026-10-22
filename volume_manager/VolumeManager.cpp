@@ -271,6 +271,11 @@ bool VolumeManager::volumeUnmount(const std::string& id, bool detach /* = false 
     return (res == OK);
 }
 
+std::unique_lock<std::mutex> VolumeManager::lockForUsbDrive() {
+    // Hold off block events and filesystem probes until the USB LUNs are closed.
+    return std::unique_lock<std::mutex>(mLock);
+}
+
 void VolumeManager::addDiskSource(DiskSource* source) {
     std::lock_guard<std::mutex> lock(mLock);
 

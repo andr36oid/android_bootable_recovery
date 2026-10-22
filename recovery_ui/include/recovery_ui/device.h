@@ -72,6 +72,7 @@ class Device {
     WIPE_SYSTEM = 100,
     ENABLE_ADB = 101,
     EMMC_TOOLS = 102,
+    USB_DRIVE = 103,
     MENU_BASE = 200,
     MENU_WIPE = 202,
     MENU_ADVANCED = 203,

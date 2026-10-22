@@ -112,6 +112,8 @@ class VolumeManager {
     bool volumeUnmount(const std::string& id, bool detach = false);
     bool volumeFormat(const std::string& id, const std::string& fsType);
 
+    std::unique_lock<std::mutex> lockForUsbDrive();
+
   public:
     void addDiskSource(DiskSource* source);
     void handleBlockEvent(NetlinkEvent* evt);

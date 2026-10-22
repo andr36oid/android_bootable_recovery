@@ -1,6 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="emmc_tools">eMMC tools</string>
+    <string name="usb_drive_title">USB drive</string>
+    <string name="usb_drive_size">%.1f GiB</string>
+    <string name="usb_drive_sd">SD slot %d (%s)</string>
+    <string name="usb_drive_emmc">eMMC (%s, plus 2 boot areas)</string>
+    <string name="usb_drive_read_only">%s (read-only)</string>
+    <string name="usb_drive_ro_off">Read-only: off</string>
+    <string name="usb_drive_ro_on">Read-only: on</string>
+    <string name="usb_drive_confirm">Share %s with the computer? Recovery cannot be used while it is shared.</string>
+    <string name="usb_drive_cable">A USB-A to USB-C cable works more often than a USB-C to USB-C cable.</string>
+    <string name="usb_drive_share">Share</string>
+    <string name="usb_drive_warning">Writing to it from the computer can stop the console from starting. Only continue if you know what you are doing.</string>
+    <string name="usb_drive_countdown">Continue (%d)</string>
+    <string name="usb_drive_continue">Continue</string>
+    <string name="usb_drive_sharing">Sharing %s with the computer. Eject it on the computer first, then press any button to stop.</string>
+    <string name="usb_drive_stop">Stop</string>
+    <string name="usb_drive_system_ro">The eMMC is read-only because Android is installed on it. The kernel protects its loader and refuses to unlock it.</string>
+    <string name="usb_drive_unknown_ro">The eMMC is read-only because the recovery start disk could not be verified.</string>
+    <string name="usb_drive_locked_ro">This SD card is read-only because its write protection is on.</string>
+    <string name="usb_drive_unlock_ro">The eMMC is read-only because the kernel refused to unlock it.</string>
+    <string name="usb_drive_empty">No drives are available. Built-in eMMC appears only when enabled in Kernel Tweaks.</string>
+    <string name="usb_drive_busy">Cannot share this drive. A filesystem could not be unmounted or a mapped device still uses it: %s</string>
+    <string name="usb_drive_changed">Cannot share this drive. It was removed, replaced, or could not be checked. Refresh and try again.</string>
+    <string name="usb_drive_failed">USB drive could not start. Check that the recovery helper and configfs mass storage support are installed.</string>
+    <string name="usb_drive_cleanup">USB drive could not stop safely. Recovery must wait until all USB storage is closed and its write protection and USB setup are restored. Try again.</string>
+    <string name="usb_drive_retry">Retry</string>
     <string name="usb_title">Connect to a computer over USB</string>
     <string name="usb_why">ADB needs the OTG port to act as a device for a computer, not as a host for accessories.</string>
     <string name="usb_wifi">Do not do this if your console has Wi-Fi built in, such as the R36XX: it uses this same USB port for its Wi-Fi, which then stops working until you restart.</string>

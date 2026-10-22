@@ -64,6 +64,7 @@
 #include "otautil/paths.h"
 #include "otautil/sysutil.h"
 #include "recovery_emmc_strings.h"
+#include "recovery_usb_drive.h"
 #include "recovery_ui/screen_ui.h"
 #include "recovery_ui/ui.h"
 #include "recovery_utils/battery_utils.h"
@@ -796,6 +797,10 @@ change_menu:
 
       case Device::EMMC_TOOLS:
         emmc_tools(device);
+        break;
+
+      case Device::USB_DRIVE:
+        UsbDriveMenu(device, [device] { return usb_device_mode(device); });
         break;
 
       case Device::ENABLE_ADB:

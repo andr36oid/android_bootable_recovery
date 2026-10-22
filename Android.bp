@@ -95,6 +95,7 @@ cc_library_static {
 
     srcs: [
         "recovery.cpp",
+        "recovery_usb_drive.cpp",
     ],
 
     generated_headers: ["recovery_emmc_strings_h"],
@@ -134,6 +135,13 @@ prebuilt_etc {
     recovery: true,
 }
 
+prebuilt_etc {
+    name: "recovery_usb_drive_helper",
+    filename: "recovery-usb-drive.sh",
+    src: "tools/recovery_usb_drive.sh",
+    recovery: true,
+}
+
 cc_binary {
     name: "recovery",
     recovery: true,
@@ -169,6 +177,7 @@ cc_binary {
         "mkshrc.recovery",
         "reboot.recovery",
         "recovery_deps",
+        "recovery_usb_drive_helper",
         "ueventd.rc.recovery",
     ],
 }

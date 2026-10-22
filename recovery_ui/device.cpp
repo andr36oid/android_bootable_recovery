@@ -36,6 +36,7 @@ static std::vector<menu_action_t> g_main_actions{
   { "Apply update", Device::APPLY_UPDATE },
   { "Factory reset", Device::MENU_WIPE },
   { emmc_strings::emmc_tools, Device::EMMC_TOOLS },
+  { emmc_strings::usb_drive_title, Device::USB_DRIVE },
   { "Advanced", Device::MENU_ADVANCED },
 };
 

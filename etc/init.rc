@@ -12,6 +12,9 @@ on early-init
 
     setprop sys.usb.configfs 0
 
+on init && property:ro.hardware=rk3326
+    setprop sys.usb.configfs 1
+
 on init
     export ANDROID_ROOT /system
     export ANDROID_DATA /data
@@ -176,6 +179,14 @@ on property:sys.usb.config=fastboot && property:sys.usb.configfs=0
     setprop sys.usb.state ${sys.usb.config}
 
 # Configfs triggers
+on property:sys.usb.config.recovery_drive=1 && property:sys.usb.configfs=2
+    write /config/usb_gadget/g1/UDC "none"
+    stop adbd
+    stop fastbootd
+    setprop sys.usb.ffs.ready 0
+    rm /config/usb_gadget/g1/configs/b.1/f1
+    setprop sys.usb.config.recovery_drive.ready 1
+
 on property:sys.usb.config=none && property:sys.usb.configfs=1
     write /config/usb_gadget/g1/UDC "none"
     stop adbd
