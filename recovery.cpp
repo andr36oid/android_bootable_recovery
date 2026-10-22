@@ -27,6 +27,7 @@
 #include <string.h>
 #include <sys/mount.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <functional>
@@ -828,6 +829,19 @@ Device::BuiltinAction start_recovery(Device* device, const std::vector<std::stri
     "Version " + android::base::GetProperty("ro.lineage.build.version", "(unknown)") +
         " (" + ver_date + ")",
   };
+  // andr36oid: its version and the build stamp Settings shows (yyyyMMdd-HHmm UTC)
+  std::string a36_version = android::base::GetProperty("ro.andr36oid.version", "");
+  if (!a36_version.empty()) {
+    if (android::base::StartsWith(a36_version, "v")) a36_version.erase(0, 1);
+    std::string line = "andr36oid " + a36_version;
+    time_t built = android::base::GetIntProperty<int64_t>("ro.build.date.utc", 0);
+    char stamp[32];
+    struct tm tm;
+    if (built > 0 && gmtime_r(&built, &tm) && strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M", &tm)) {
+      line += std::string(", build ") + stamp;
+    }
+    title_lines = { line };
+  }
   if (android::base::GetBoolProperty("ro.build.ab_update", false)) {
     std::string slot = android::base::GetProperty("ro.boot.slot_suffix", "");
     if (android::base::StartsWith(slot, "_")) slot.erase(0, 1);
