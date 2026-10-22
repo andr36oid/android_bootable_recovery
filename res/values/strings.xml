@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="emmc_tools">eMMC tools</string>
+    <string name="emmc_info">Show eMMC info</string>
+    <string name="emmc_restore">Restore stock eMMC</string>
+    <string name="emmc_refresh">Refresh</string>
+    <string name="emmc_back">Back</string>
+    <string name="emmc_cancel">Cancel</string>
+    <string name="emmc_device">eMMC: %s (%s MiB)</string>
+    <string name="emmc_cid">CID: %s</string>
+    <string name="emmc_lock">Write lock: %s</string>
+    <string name="emmc_boot">Recovery started from: %s</string>
+    <string name="emmc_backup">Backup for this CID: %s</string>
+    <string name="emmc_no_backup">No stock backup for this CID found.</string>
+    <string name="emmc_unverified">Backup hashes will be checked before any eMMC write.</string>
+    <string name="emmc_unavailable">Built-in eMMC unavailable.</string>
+    <string name="emmc_enable">Start recovery from an SD card with dw_mmc_rockchip.builtin_emmc=1 to enable the eMMC.</string>
+    <string name="emmc_sd_required">To restore, start recovery from SD. Recovery on the eMMC cannot restore itself.</string>
+    <string name="emmc_confirm">RESTORE STOCK eMMC?</string>
+    <string name="emmc_erase">Overwrite ALL eMMC partitions, apps and data?</string>
+    <string name="emmc_irreversible">THIS CANNOT BE UNDONE!</string>
+    <string name="emmc_power">Connect a charger. Do not power off or remove storage.</string>
+    <string name="emmc_restore_go">Erase eMMC and restore stock</string>
+    <string name="emmc_working">Restoring stock eMMC. Keep the charger connected.</string>
+    <string name="emmc_percent">  %d%%</string>
+    <string name="emmc_success">Stock eMMC restored and read back successfully.</string>
+    <string name="emmc_not_exact">Stock data restored, but the boot areas could not be confirmed as stock.</string>
+    <string name="emmc_failed">Restore did not complete. Keep the backup and retry from SD recovery.</string>
+    <string name="emmc_helper_failed">The eMMC helper failed or returned no result. Its prebuilt may need rebuilding.</string>
+</resources>

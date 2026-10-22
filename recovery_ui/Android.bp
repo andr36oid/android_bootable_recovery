@@ -32,6 +32,8 @@ cc_library {
 
     export_include_dirs: ["include"],
 
+    generated_headers: ["recovery_emmc_strings_h"],
+
     static_libs: [
         "libminui",
         "libotautil",

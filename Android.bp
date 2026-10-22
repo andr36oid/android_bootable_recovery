@@ -66,6 +66,7 @@ cc_defaults {
         "libcrypto",
         "libcutils",
         "libfs_mgr",
+        "libjsoncpp",
         "liblp",
         "liblog",
         "libprotobuf-cpp-lite",
@@ -96,9 +97,33 @@ cc_library_static {
         "recovery.cpp",
     ],
 
+    generated_headers: ["recovery_emmc_strings_h"],
+
     shared_libs: [
         "librecovery_ui",
     ],
+}
+
+python_binary_host {
+    name: "recovery_emmc_strings",
+    main: "tools/recovery_emmc_strings.py",
+    srcs: ["tools/recovery_emmc_strings.py"],
+    version: {
+        py2: {
+            enabled: false,
+        },
+        py3: {
+            enabled: true,
+        },
+    },
+}
+
+genrule {
+    name: "recovery_emmc_strings_h",
+    tools: ["recovery_emmc_strings"],
+    srcs: ["res/values/strings.xml"],
+    out: ["recovery_emmc_strings.h"],
+    cmd: "$(location recovery_emmc_strings) $(in) $(out)",
 }
 
 prebuilt_etc {

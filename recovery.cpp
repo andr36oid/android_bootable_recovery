@@ -18,6 +18,7 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <getopt.h>
 #include <inttypes.h>
 #include <limits.h>
@@ -27,6 +28,7 @@
 #include <string.h>
 #include <sys/mount.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -45,6 +47,7 @@
 #include <android-base/strings.h>
 #include <cutils/properties.h> /* for property_list */
 #include <fs_mgr/roots.h>
+#include <json/json.h>
 #include <volume_manager/VolumeManager.h>
 #include <ziparchive/zip_archive.h>
 
@@ -60,6 +63,7 @@
 #include "otautil/error_code.h"
 #include "otautil/paths.h"
 #include "otautil/sysutil.h"
+#include "recovery_emmc_strings.h"
 #include "recovery_ui/screen_ui.h"
 #include "recovery_ui/ui.h"
 #include "recovery_utils/battery_utils.h"
@@ -203,6 +207,177 @@ static bool ask_to_wipe_data(Device* device) {
       std::bind(&Device::HandleMenuKey, device, std::placeholders::_1, std::placeholders::_2));
 
   return (chosen_item == 1);
+}
+
+static Json::Value run_emmc_tool(RecoveryUI* ui, const std::vector<std::string>& args) {
+  Json::Value result;
+  result["ok"] = false;
+  result["error"] = emmc_strings::emmc_helper_failed;
+  std::vector<const char*> argv{ "/system/bin/andr36oid-emmcinstall", "--recovery" };
+  for (const auto& arg : args) argv.push_back(arg.c_str());
+  argv.push_back(nullptr);
+
+  int pipefd[2];
+  if (pipe2(pipefd, O_CLOEXEC) == -1) return result;
+  FILE* input = fdopen(pipefd[0], "r");
+  if (input == nullptr) {
+    close(pipefd[0]);
+    close(pipefd[1]);
+    return result;
+  }
+  pid_t child = fork();
+  if (child == 0) {
+    close(pipefd[0]);
+    if (dup2(pipefd[1], STDOUT_FILENO) == -1) _exit(1);
+    close(pipefd[1]);
+    execv(argv[0], const_cast<char* const*>(argv.data()));
+    _exit(1);
+  }
+  close(pipefd[1]);
+  if (child == -1) {
+    fclose(input);
+    return result;
+  }
+
+  Json::Reader reader;
+  char* line = nullptr;
+  size_t capacity = 0;
+  ssize_t length;
+  int last_percent = -1;
+  while ((length = getline(&line, &capacity, input)) != -1) {
+    Json::Value event;
+    if (!reader.parse(line, line + length, event, false) || !event.isObject()) continue;
+    if (event.isMember("ok")) {
+      result = event;
+      continue;
+    }
+    std::string state = event["state"].asString();
+    if (state == "start") {
+      ui->SetProgressType(RecoveryUI::EMPTY);
+      ui->SetProgressType(RecoveryUI::DETERMINATE);
+      ui->ShowProgress(1.0, 0);
+      ui->Print("%s\n", event["op"].asCString());
+      last_percent = -1;
+    } else if (state == "run" && event["total"].asDouble() > 0) {
+      double fraction = event["done"].asDouble() / event["total"].asDouble();
+      ui->SetProgress(fraction);
+      int percent = static_cast<int>(fraction * 100);
+      if (percent / 10 != last_percent / 10 || last_percent == -1) {
+        ui->Print(emmc_strings::emmc_percent, percent);
+        ui->Print("\n");
+        last_percent = percent;
+      }
+    } else if (state == "ok") {
+      ui->SetProgress(1.0);
+    }
+    if (event.isMember("log")) ui->Print("%s\n", event["log"].asCString());
+  }
+  free(line);
+  fclose(input);
+  int status;
+  if (TEMP_FAILURE_RETRY(waitpid(child, &status, 0)) == -1 || !WIFEXITED(status) ||
+      WEXITSTATUS(status) != 0) {
+    result["ok"] = false;
+  }
+  return result;
+}
+
+static void show_emmc_details(RecoveryUI* ui, const std::vector<std::string>& lines) {
+  std::string text = android::base::Join(lines, "\n") + "\n";
+  ui->Print("%s", text.c_str());
+  if (android::base::WriteStringToFile(text, "/tmp/emmc-info.txt")) {
+    ui->ShowFile("/tmp/emmc-info.txt");
+  }
+}
+
+static void emmc_tools(Device* device) {
+  auto ui = device->GetUI();
+  auto key_handler =
+      std::bind(&Device::HandleMenuKey, device, std::placeholders::_1, std::placeholders::_2);
+  ui->ShowText(true);
+  for (;;) {
+    auto inspection = run_emmc_tool(ui, { "inspect" });
+    bool from_sd = inspection["result"]["booted_from"] == "sd";
+    std::vector<VolumeInfo> volumes;
+    VolumeManager::Instance()->getVolumeInfo(volumes);
+    std::vector<std::string> mounted;
+    std::vector<std::string> args{ "inspect" };
+    if (from_sd) args.push_back("/data/media/0");
+    for (const auto& volume : volumes) {
+      // Never mount the target's internal storage to look for a restore source.
+      if (volume.mId == "emulated" && !from_sd) continue;
+      if (volume.mMountable && VolumeManager::Instance()->volumeMount(volume.mId)) {
+        mounted.push_back(volume.mId);
+        args.push_back(volume.mPath);
+      }
+    }
+    inspection = run_emmc_tool(ui, args);
+    auto info = inspection["result"];
+    auto chip = info["emmc"];
+    std::string backup = info["backup"].asString();
+    std::string cid = chip["cid"].asString();
+    bool can_restore = inspection["ok"].asBool() && !backup.empty() &&
+                       info["problem"].asString().empty() && info["booted_from"] == "sd";
+    std::vector<std::string> headers{ emmc_strings::emmc_tools };
+    if (!inspection["ok"].asBool()) {
+      headers.push_back(emmc_strings::emmc_unavailable);
+    } else {
+      headers.push_back(
+          android::base::StringPrintf(emmc_strings::emmc_device, chip["name"].asCString(),
+                                      std::to_string(chip["sectors"].asInt64() / 2048).c_str()));
+      headers.push_back(android::base::StringPrintf(emmc_strings::emmc_cid, cid.c_str()));
+      headers.push_back(backup.empty()
+                            ? emmc_strings::emmc_no_backup
+                            : android::base::StringPrintf(emmc_strings::emmc_backup,
+                                                          android::base::Basename(backup).c_str()));
+      if (info["booted_from"] != "sd")
+        headers.push_back(emmc_strings::emmc_sd_required);
+      else if (!info["problem"].asString().empty())
+        headers.push_back(info["problem"].asString());
+    }
+    std::vector<std::string> items{ emmc_strings::emmc_info, emmc_strings::emmc_refresh,
+                                    emmc_strings::emmc_back };
+    if (can_restore) items.push_back(emmc_strings::emmc_restore);
+    size_t chosen = ui->ShowMenu(headers, items, 0, true, key_handler);
+    if (chosen == 0) {
+      if (inspection["ok"].asBool()) {
+        if (!backup.empty()) {
+          headers.push_back(backup);
+          headers.push_back(emmc_strings::emmc_unverified);
+        }
+        headers.push_back(
+            android::base::StringPrintf(emmc_strings::emmc_lock, chip["lock"].asCString()));
+        headers.push_back(
+            android::base::StringPrintf(emmc_strings::emmc_boot, info["booted_from"].asCString()));
+      } else {
+        headers.push_back(emmc_strings::emmc_enable);
+        headers.push_back(inspection["error"].asString());
+      }
+      show_emmc_details(ui, headers);
+    } else if (chosen == 3 && can_restore) {
+      std::vector<std::string> warning{
+        emmc_strings::emmc_confirm, emmc_strings::emmc_erase, emmc_strings::emmc_irreversible,
+        emmc_strings::emmc_power, android::base::StringPrintf(emmc_strings::emmc_cid, cid.c_str())
+      };
+      if (ui->ShowMenu(warning, { emmc_strings::emmc_cancel, emmc_strings::emmc_restore_go }, 0,
+                       true, key_handler) == 1) {
+        save_current_log = true;
+        ui->Print("%s\n", emmc_strings::emmc_working);
+        auto restored = run_emmc_tool(ui, { "restore", cid, backup });
+        ui->SetProgressType(RecoveryUI::EMPTY);
+        ui->SetBackground(restored["ok"].asBool() ? RecoveryUI::NO_COMMAND : RecoveryUI::ERROR);
+        std::vector<std::string> outcome{ restored["ok"].asBool()
+                                              ? emmc_strings::emmc_success
+                                              : restored["not_exact"].asBool()
+                                                    ? emmc_strings::emmc_not_exact
+                                                    : emmc_strings::emmc_failed };
+        if (restored.isMember("error")) outcome.push_back(restored["error"].asString());
+        show_emmc_details(ui, outcome);
+      }
+    }
+    for (const auto& id : mounted) VolumeManager::Instance()->volumeUnmount(id);
+    if (chosen != 0 && chosen != 1 && chosen != 3) return;
+  }
 }
 
 static InstallResult apply_update_menu(Device* device, Device::BuiltinAction* reboot_action){
@@ -588,6 +763,10 @@ change_menu:
 
       case Device::VIEW_RECOVERY_LOGS:
         choose_recovery_file(device);
+        break;
+
+      case Device::EMMC_TOOLS:
+        emmc_tools(device);
         break;
 
       case Device::ENABLE_ADB:
