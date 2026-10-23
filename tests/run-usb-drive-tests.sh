@@ -14,5 +14,5 @@ if [ -n "${TOYBOX:-}" ]; then
 fi
 for shell in sh bash mksh; do
     command -v "$shell" >/dev/null || continue
-    "$shell" "$HERE/tests/usb-drive-helper-test.sh" "$T/$shell"
+    timeout 120 "$shell" "$HERE/tests/usb-drive-helper-test.sh" "$T/$shell"
 done

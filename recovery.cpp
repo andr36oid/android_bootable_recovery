@@ -387,7 +387,7 @@ static void emmc_tools(Device* device) {
 static const char kOtgMode[] =
     "/sys/devices/platform/ff2c0000.syscon/ff2c0000.syscon:usb2-phy@100/otg_mode";
 
-static bool usb_device_mode(Device* device) {
+static bool usb_device_mode(Device* device, bool switch_role = true) {
   std::string mode;
   // No switch on this console (or already a device): nothing to ask
   if (!android::base::ReadFileToString(kOtgMode, &mode)) return true;
@@ -400,6 +400,8 @@ static bool usb_device_mode(Device* device) {
                              std::placeholders::_2)) != 1) {
     return false;
   }
+  // The drive helper switches roles after init has released the normal gadget.
+  if (!switch_role) return true;
   android::base::WriteStringToFile("peripheral", kOtgMode);
   if (!android::base::ReadFileToString(kOtgMode, &mode) ||
       android::base::Trim(mode) != "peripheral") {
@@ -800,7 +802,7 @@ change_menu:
         break;
 
       case Device::USB_DRIVE:
-        UsbDriveMenu(device, [device] { return usb_device_mode(device); });
+        UsbDriveMenu(device, [device] { return usb_device_mode(device, false); });
         break;
 
       case Device::ENABLE_ADB:

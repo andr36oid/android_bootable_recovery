@@ -4,4 +4,4 @@
 
 class Device;
 
-void UsbDriveMenu(Device* device, const std::function<bool()>& device_mode);
+void UsbDriveMenu(Device* device, const std::function<bool()>& confirm_device_mode);

@@ -24,6 +24,7 @@
     <string name="usb_drive_busy">Cannot share this drive. A filesystem could not be unmounted or a mapped device still uses it: %s</string>
     <string name="usb_drive_changed">Cannot share this drive. It was removed, replaced, or could not be checked. Refresh and try again.</string>
     <string name="usb_drive_failed">USB drive could not start. Check that the recovery helper and configfs mass storage support are installed.</string>
+    <string name="usb_drive_step">Failed step: %s. View recovery logs for details.</string>
     <string name="usb_drive_cleanup">USB drive could not stop safely. Recovery must wait until all USB storage is closed and its write protection and USB setup are restored. Try again.</string>
     <string name="usb_drive_retry">Retry</string>
     <string name="usb_title">Connect to a computer over USB</string>

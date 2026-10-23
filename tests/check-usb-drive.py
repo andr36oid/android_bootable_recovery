@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -135,6 +136,179 @@ int main() {
                     "-I" + str(out), str(out / "countdown.cpp"), "-o", str(out / "countdown")],
                    check=True)
     subprocess.run([str(out / "countdown")], check=True)
+    check_protocol(repo, out, compiler, source)
+
+
+def check_protocol(repo, out, compiler, source):
+    # Run the production socket reader and sharing flow, including failure recovery.
+    helper = out / "helper.sh"
+    helper.write_text(r'''case $1 in
+recover) echo stopped >"$TEST_PHASE"; echo stopped ;;
+volumes) echo public:179_32 ;;
+mounts) echo /storage/card ;;
+session)
+    echo gated >"$TEST_PHASE"
+    printf 'log|gate_gadget: acknowledged\ngated\n'
+    IFS= read -r request || exit 1
+    if [ "$request" = start ]; then
+        [ -f "$TEST_PHASE.unmounted" ] || exit 1
+        [ "$TEST_MODE" != eof ] || exit 1
+        if [ "$TEST_MODE" = start_error ]; then
+            printf 'log|failed: bind_udc\nerror|setup||bind_udc\n'
+        else
+            echo ready >"$TEST_PHASE"
+            printf 'log|bind_udc: bound ff300000.usb\nready|0|none\n'
+        fi
+        IFS= read -r request || exit 1
+    fi
+    [ "$request" = stop ] || exit 1
+    if [ "$TEST_MODE" = cleanup_error ]; then
+        printf 'log|failed: close_drive\nerror|cleanup||close_drive\n'
+        exit 1
+    fi
+    echo stopped >"$TEST_PHASE"
+    printf 'log|stopped\nstopped\n'
+    ;;
+*) exit 1 ;;
+esac
+''')
+    harness = r'''
+#include <algorithm>
+#include <cassert>
+#include <cerrno>
+#include <chrono>
+#include <condition_variable>
+#include <cstdarg>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
+#include <functional>
+#include <linux/input.h>
+#include <mutex>
+#include <string>
+#include <sys/socket.h>
+#include <sys/wait.h>
+#include <thread>
+#include <unistd.h>
+#include <vector>
+#include "recovery_emmc_strings.h"
+
+namespace android { namespace base {
+std::string Trim(const std::string& text) {
+  auto first=text.find_first_not_of(" \t\r\n");
+  return first==std::string::npos ? "" : text.substr(first, text.find_last_not_of(" \t\r\n")-first+1);
+}
+std::vector<std::string> Split(const std::string& text, const std::string& separator) {
+  std::vector<std::string> result;
+  size_t first=0, next;
+  while ((next=text.find(separator, first))!=std::string::npos) {
+    result.push_back(text.substr(first, next-first)); first=next+separator.size();
+  }
+  result.push_back(text.substr(first)); return result;
+}
+std::string StringPrintf(const char* format, ...) {
+  char text[4096];
+  va_list args; va_start(args, format); vsnprintf(text, sizeof(text), format, args); va_end(args);
+  return text;
+}
+std::string role="host";
+int role_writes=0;
+bool ReadFileToString(const char*, std::string* text) { *text=role; return true; }
+bool WriteStringToFile(const std::string& text, const char*) { role=text; ++role_writes; return true; }
+}}
+std::string phase() { std::ifstream input(getenv("TEST_PHASE")); std::string text; input>>text; return text; }
+std::string mode() { return getenv("TEST_MODE"); }
+struct VolumeInfo { std::string mId="public:179_32", mPath="/storage/card"; };
+struct VolumeManager {
+  std::mutex mutex;
+  static VolumeManager* Instance() { static VolumeManager manager; return &manager; }
+  void getVolumeInfo(std::vector<VolumeInfo>& volumes) {
+    std::lock_guard<std::mutex> lock(mutex); assert(phase()=="gated"); volumes.push_back({});
+  }
+  bool volumeUnmount(const std::string&) {
+    std::lock_guard<std::mutex> lock(mutex); assert(phase()=="gated");
+    std::ofstream(std::string(getenv("TEST_PHASE"))+".unmounted")<<"yes";
+    return mode()!="unmount_error";
+  }
+  std::unique_lock<std::mutex> lockForUsbDrive() { return std::unique_lock<std::mutex>(mutex); }
+};
+struct RecoveryUI {
+  int shared=0, failures=0, retries=0, confirmations=0;
+  size_t confirmation=1;
+  size_t ShowMenu(const std::vector<std::string>& headers, const std::vector<std::string>& items,
+                  size_t, bool, const std::function<int(int, bool)>& handler) {
+    if (headers[0]==emmc_strings::usb_title) {
+      assert(headers[2]==emmc_strings::usb_wifi && headers[3]==emmc_strings::usb_charging);
+      ++confirmations; return confirmation;
+    }
+    if (items[0]==emmc_strings::usb_drive_stop) {
+      assert(phase()=="ready" && handler(KEY_BACK, true)==0 && handler(KEY_A, true)==0); ++shared;
+    } else if (items[0]==emmc_strings::usb_drive_retry) {
+      assert(headers[0].find("close_drive")!=std::string::npos); ++retries;
+    } else {
+      assert(phase()=="stopped");
+      assert(headers[0].find(mode()=="start_error" ? "bind_udc" :
+                             mode()=="unmount_error" ? "unmount_volumes" : "start")!=std::string::npos);
+      ++failures;
+    }
+    return 0;
+  }
+  void Print(const char*, ...) {}
+};
+struct Device {
+  RecoveryUI ui;
+  RecoveryUI* GetUI() { return &ui; }
+  int HandleMenuKey(int key, bool) { return key; }
+};
+'''
+    production = source[source.index("class UsbDriveHelper {"):
+                        source.index("// CancelWaitKey")]
+    production += source[source.index("static std::string decode_mount_path("):
+                         source.index("void UsbDriveMenu(")]
+    production = production.replace('"/system/bin/sh", "/system/etc/recovery-usb-drive.sh"',
+                                    '"/bin/sh", ' + json.dumps(str(helper)))
+    recovery = (repo / "recovery.cpp").read_text()
+    production += recovery[recovery.index("static const char kOtgMode[]"):
+                           recovery.index("static InstallResult apply_update_menu(")]
+    harness += production + r'''
+int main() {
+  Device device;
+  assert(usb_device_mode(&device, false));
+  assert(android::base::role=="host" && android::base::role_writes==0);
+  device.ui.confirmation=0;
+  assert(!usb_device_mode(&device, false));
+  assert(android::base::role_writes==0);
+  device.ui.confirmation=1;
+  assert(usb_device_mode(&device));
+  assert(android::base::role=="peripheral" && android::base::role_writes==1);
+  assert(usb_device_mode(&device, false));
+  assert(device.ui.confirmations==3 && android::base::role_writes==1);
+  assert(usb_drive_error("error|busy|/data|unmount_disk").find("/data")!=std::string::npos);
+  assert(usb_drive_error("error|changed||check_drive").find("check_drive")!=std::string::npos);
+  UsbDrive drive{"mmcblk1", 2, 33554432, "0123456789abcdef0123456789abcdef", "none", false};
+  share_usb_drive(&device, drive, false);
+  assert(device.ui.shared==int(mode()=="normal" || mode()=="cleanup_error"));
+  assert(device.ui.failures==int(mode()=="start_error" || mode()=="unmount_error" || mode()=="eof"));
+  assert(device.ui.retries==int(mode()=="cleanup_error"));
+  assert(phase()=="stopped");
+}
+'''
+    (out / "protocol.cpp").write_text(harness)
+    subprocess.run([compiler, "-std=c++17", "-Wall", "-Wextra", "-Werror", "-pthread",
+                    "-I" + str(out), str(out / "protocol.cpp"), "-o", str(out / "protocol")],
+                   check=True)
+    for mode in ["normal", "start_error", "cleanup_error", "unmount_error", "eof"]:
+        result = subprocess.run([str(out / "protocol")], check=True, timeout=10,
+                                env={**os.environ, "TEST_MODE": mode,
+                                     "TEST_PHASE": str(out / ("phase-" + mode))},
+                                capture_output=True, text=True)
+        assert "recovery-usb-drive: log|gate_gadget: acknowledged" in result.stdout
+        if mode in ["normal", "cleanup_error"]:
+            assert "recovery-usb-drive: log|bind_udc: bound" in result.stdout
+        if mode in ["start_error", "cleanup_error"]:
+            assert "recovery-usb-drive: log|failed:" in result.stdout
+    print("Recovery role confirmation, gated unmount, log forwarding, errors, Stop and journal retry passed")
 
 
 if __name__ == "__main__":

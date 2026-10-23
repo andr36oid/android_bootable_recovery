@@ -67,20 +67,27 @@ class UsbDriveHelper {
     if (output_ == nullptr) return false;
     char* buffer = nullptr;
     size_t capacity = 0;
-    ssize_t length = getline(&buffer, &capacity, output_);
-    if (length > 0) *line = android::base::Trim(std::string(buffer, length));
+    ssize_t length;
+    while ((length = getline(&buffer, &capacity, output_)) > 0) {
+      *line = android::base::Trim(std::string(buffer, length));
+      // Helper stdout is our socket; copy progress into recovery.log before parsing replies.
+      printf("recovery-usb-drive: %s\n", line->c_str());
+      fflush(stdout);
+      if (line->compare(0, 4, "log|") != 0) break;
+    }
     free(buffer);
     return length > 0;
   }
 
-  bool Stop(std::string* line) {
+  bool Command(const std::string& command, std::string* line) {
     if (output_ == nullptr) return false;
-    const char* command = "stop\n";
-    size_t remaining = 5;
+    std::string request = command + "\n";
+    const char* data = request.c_str();
+    size_t remaining = request.size();
     while (remaining > 0) {
-      ssize_t sent = TEMP_FAILURE_RETRY(send(fileno(output_), command, remaining, MSG_NOSIGNAL));
+      ssize_t sent = TEMP_FAILURE_RETRY(send(fileno(output_), data, remaining, MSG_NOSIGNAL));
       if (sent <= 0) return false;
-      command += sent;
+      data += sent;
       remaining -= sent;
     }
     return Read(line);
@@ -117,12 +124,17 @@ static const char* usb_drive_reason(const std::string& reason) {
 
 static std::string usb_drive_error(const std::string& response) {
   auto fields = android::base::Split(response, "|");
+  std::string error = emmc_strings::usb_drive_failed;
   if (fields.size() >= 2 && fields[1] == "busy") {
-    return android::base::StringPrintf(emmc_strings::usb_drive_busy,
-                                       fields.size() > 2 ? fields[2].c_str() : "");
+    error = android::base::StringPrintf(emmc_strings::usb_drive_busy,
+                                        fields.size() > 2 ? fields[2].c_str() : "");
   }
-  if (fields.size() >= 2 && fields[1] == "changed") return emmc_strings::usb_drive_changed;
-  return emmc_strings::usb_drive_failed;
+  if (fields.size() >= 2 && fields[1] == "changed") error = emmc_strings::usb_drive_changed;
+  if (fields.size() >= 2 && fields[1] == "cleanup") error = emmc_strings::usb_drive_cleanup;
+  if (fields.size() > 3 && !fields[3].empty()) {
+    error += "\n" + android::base::StringPrintf(emmc_strings::usb_drive_step, fields[3].c_str());
+  }
+  return error;
 }
 
 struct UsbDrive {
@@ -241,28 +253,35 @@ static void share_usb_drive(Device* device, const UsbDrive& drive, bool read_onl
   auto ui = device->GetUI();
   auto key_handler =
       std::bind(&Device::HandleMenuKey, device, std::placeholders::_1, std::placeholders::_2);
-  std::string error;
-  if (!unmount_usb_drive(drive, &error)) {
-    ui->ShowMenu({ error }, { emmc_strings::emmc_back }, 0, true, key_handler);
-    return;
-  }
-  // VolumeManager probes briefly mount new filesystems. Keep them out until all LUNs close.
-  auto volume_lock = VolumeManager::Instance()->lockForUsbDrive();
-  std::vector<std::string> recovered;
-  while (!run_usb_drive({ "recover" }, &recovered)) {
-    recovered.clear();
-    ui->ShowMenu({ emmc_strings::usb_drive_cleanup }, { emmc_strings::usb_drive_retry }, 0, true,
-                 key_handler);
+  {
+    auto volume_lock = VolumeManager::Instance()->lockForUsbDrive();
+    std::vector<std::string> recovered;
+    while (!run_usb_drive({ "recover" }, &recovered)) {
+      std::string error = recovered.empty() ? "error|cleanup||recover" : recovered.back();
+      ui->ShowMenu({ usb_drive_error(error) }, { emmc_strings::usb_drive_retry }, 0, true,
+                   key_handler);
+      recovered.clear();
+    }
   }
   UsbDriveHelper helper;
   std::string response;
   if (!helper.Start({ "session", drive.disk, drive.cid, read_only ? "1" : "0" }) ||
       !helper.Read(&response)) {
-    response = "error|setup|";
+    response = "error|setup||helper";
   }
+  // Init owns the old gadget until this reply. VolumeManager unmounts take their own lock.
+  std::string failure;
+  bool prepared = response == "gated" && unmount_usb_drive(drive, &failure);
+  if (response == "gated" && !prepared) {
+    printf("recovery-usb-drive: failed: unmount_volumes: %s\n", failure.c_str());
+    failure += "\n" + android::base::StringPrintf(emmc_strings::usb_drive_step, "unmount_volumes");
+  }
+  // VolumeManager probes briefly mount new filesystems. Keep them out until all LUNs close.
+  auto volume_lock = VolumeManager::Instance()->lockForUsbDrive();
+  if (prepared && !helper.Command("start", &response)) response = "error|setup||start";
   auto fields = android::base::Split(response, "|");
   bool shared = fields.size() == 3 && fields[0] == "ready";
-  std::string failure = shared ? "" : usb_drive_error(response);
+  if (!shared && failure.empty()) failure = usb_drive_error(response);
   if (shared) {
     std::vector<std::string> headers{ android::base::StringPrintf(emmc_strings::usb_drive_sharing,
                                                                   drive.Label().c_str()) };
@@ -271,7 +290,7 @@ static void share_usb_drive(Device* device, const UsbDrive& drive, bool read_onl
     ui->ShowMenu(headers, { emmc_strings::usb_drive_stop }, 0, false, [](int, bool) { return 0; });
   }
   for (;;) {
-    bool replied = helper.Stop(&response);
+    bool replied = helper.Command("stop", &response);
     if (replied && response == "stopped") break;
     // A lost helper may have left LUNs open. Keep recovery blocked until cleanup succeeds.
     if (!replied) {
@@ -279,14 +298,15 @@ static void share_usb_drive(Device* device, const UsbDrive& drive, bool read_onl
       std::vector<std::string> result;
       if (run_usb_drive({ "recover" }, &result) && result == std::vector<std::string>{ "stopped" })
         break;
+      response = result.empty() ? "error|cleanup||recover" : result.back();
     }
-    ui->ShowMenu({ emmc_strings::usb_drive_cleanup }, { emmc_strings::usb_drive_retry }, 0, true,
+    ui->ShowMenu({ usb_drive_error(response) }, { emmc_strings::usb_drive_retry }, 0, true,
                  key_handler);
   }
   if (!shared) ui->ShowMenu({ failure }, { emmc_strings::emmc_back }, 0, true, key_handler);
 }
 
-void UsbDriveMenu(Device* device, const std::function<bool()>& device_mode) {
+void UsbDriveMenu(Device* device, const std::function<bool()>& confirm_device_mode) {
   auto ui = device->GetUI();
   auto key_handler = [device](int key, bool visible) {
     return key == KEY_AGAIN ? Device::kRefresh : device->HandleMenuKey(key, visible);
@@ -333,7 +353,7 @@ void UsbDriveMenu(Device* device, const std::function<bool()>& device_mode) {
     if (chosen == drives.size() + 1 || chosen == static_cast<size_t>(Device::kRefresh)) continue;
     if (chosen >= drives.size()) return;
     const auto& drive = drives[chosen];
-    if (!device_mode()) continue;
+    if (!confirm_device_mode()) continue;
     std::vector<std::string> warning{ android::base::StringPrintf(emmc_strings::usb_drive_confirm,
                                                                   drive.Label().c_str()),
                                       emmc_strings::usb_drive_cable };
