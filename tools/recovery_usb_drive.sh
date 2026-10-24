@@ -178,6 +178,27 @@ wait_prop() {
 	done
 }
 
+# True only when a host cable is actually attached. Unknown or unreadable counts as attached
+# so we never shortcut the strict path by mistake.
+cable_attached() {
+	udc=${controller:-$(getprop sys.usb.controller)}
+	[ -n "$udc" ] || return 0
+	state=$(cat "/sys/class/udc/$udc/state" 2>/dev/null) || return 0
+	[ "$state" != "not attached" ]
+}
+
+# Wait for the restored config to settle. With the cable unplugged it can never reach its
+# connected state, but the card is already released by then, so a detached gadget means the
+# stop is complete, not failed. Keeps the strict wait whenever a cable is present.
+wait_usb_config() {
+	wait_prop sys.usb.state "$1" && return 0
+	if ! cable_attached; then
+		log_step "wait_usb_config: '$1' not reached but cable detached, stop is complete"
+		return 0
+	fi
+	return 1
+}
+
 gate_gadget() {
 	[ "$(getprop sys.usb.configfs)" = 1 ] || return 1
 	[ ! -d "$F" ] || return 1
@@ -288,6 +309,7 @@ bind_udc() {
 }
 
 start_drive() {
+	log_step "entering USB storage mode: $disk (slot $slot, ${luns} ro=$ro)"
 	step unmount_disk || return 1
 	step unbind || return 1
 	step configure_drive || return 1
@@ -353,8 +375,9 @@ rescan() { blockdev --rereadpt "$DEV/$disk" >&2 || log_step "rescan: failed for 
 
 cleanup() {
 	error=cleanup detail='' failed_step=''
+	[ "${owned:-0}" != 1 ] || log_step "leaving USB storage mode: ${disk:-?}"
 	if [ "${returned:-0}" = 1 ]; then
-		step wait_prop sys.usb.state "$saved_config" || return 1
+		step wait_usb_config "$saved_config" || return 1
 		owned=0
 		rm -rf "$STATE"
 		return 0
@@ -370,7 +393,7 @@ cleanup() {
 	step restore_usb || return 1
 	# Re-read a partition table changed by the computer, while probes are paused.
 	step rescan
-	step wait_prop sys.usb.state "$saved_config" || return 1
+	step wait_usb_config "$saved_config" || return 1
 	owned=0
 	rm -rf "$STATE"
 	log_step stopped
